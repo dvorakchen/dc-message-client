@@ -12,21 +12,26 @@ use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 struct Args {
     #[arg(short, long)]
     username: String,
+    #[arg(short, long)]
+    to: String,
 }
 
 #[tokio::main]
 async fn main() {
     let arg = Args::parse();
     let username = arg.username.clone();
+    let receiver = arg.to.clone();
 
     //  连接服务器 ::8233
-    let stream = TcpStream::connect("127.0.0.1:8233").await.unwrap();
+    let mut stream = TcpStream::connect("127.0.0.1:8233").await.unwrap();
+    login(&mut stream, username.clone()).await;
+
     let (mut read_stream, mut write_stream) = stream.into_split();
 
     let (tx, rx) = oneshot::channel::<bool>();
 
     let write_join = tokio::spawn(async move {
-        read_and_send(&mut write_stream, username, tx).await;
+        read_and_send(&mut write_stream, username, tx, receiver).await;
     });
 
     let read_join = tokio::spawn(async move {
@@ -37,7 +42,21 @@ async fn main() {
     read_join.await.unwrap();
 }
 
-async fn read_and_send(write_stream: &mut OwnedWriteHalf, username: String, tx: Sender<bool>) {
+async fn login(stream: &mut TcpStream, username: String) {
+    Message::send(
+        stream,
+        Message::new(MessageType::Login, username, String::new()),
+    )
+    .await
+    .unwrap();
+}
+
+async fn read_and_send(
+    write_stream: &mut OwnedWriteHalf,
+    username: String,
+    tx: Sender<bool>,
+    receiver: String,
+) {
     let stdin = BufReader::new(io::stdin());
     let mut stdin = stdin.lines();
 
@@ -50,7 +69,7 @@ async fn read_and_send(write_stream: &mut OwnedWriteHalf, username: String, tx: 
                 break;
             }
 
-            let message = Message::new(MessageType::Text(line), username.clone());
+            let message = Message::new(MessageType::Text(line), username.clone(), receiver.clone());
 
             Message::send(write_stream, message).await.unwrap();
         }
